@@ -1,0 +1,794 @@
+---
+title: "Elastic net illustration"
+author: "Paul DW Kirk"
+date: "10/10/2021"
+output: pdf_document
+---
+
+An illustration of the differing ways in which LASSO and elastic net treat 
+correlated predictors.
+
+
+## Introduction
+We consider regression models of the form:
+\begin{equation}
+Y_i=\beta_0 + \sum_{l=1}^p \beta_l X_{il}.
+\end{equation}
+
+The elastic net estimator puts a penalty of the form 
+\begin{equation}
+\lambda (\alpha \|\beta\|_1+(1-\alpha)\|\beta\|_2)
+\end{equation}
+
+on the parameter vector, where we have defined the vector $\beta$ to exclude the
+intercept $\beta_0$.
+
+## Simulation setup
+We simulate data vectors $X_i \in \mathbb{R}^p$ by sampling from a $p$-variate 
+Gaussian distribution, $X_i \sim \mathcal{N}_p({\bf 0},\Sigma )$.  Throughout, we
+take $p = 400$.  We set the covariance matrix $\Sigma$  to be equal to the 
+identity, except that we define correlated sets of predictors $\{X_2, X_3\}, \{X_4,X_5,X_6\}$, and 
+$\{X_7,X_8,X_9,X_{10}\}$ by setting
+
+
+\begin{equation}
+\Sigma_{2,3} = \Sigma_{4,5} =  \Sigma_{4,6} = \Sigma_{5,6} = \Sigma_{7,8}= \Sigma_{7,9}  = \Sigma_{7,10}  = \Sigma_{8,9} = \Sigma_{8,10} = \Sigma_{9,10} = \rho
+\end{equation}
+(together with their symmetric counterparts), so that the top left corner of the
+covariance matrix has the following form:
+
+\begin{equation}
+\Sigma = \left(\begin{array}{  l  l  l  l  l  l  l  l  l  l  l  }
+
+	1 & \  & \  & \  & \  & \  & \  & \  & \  & \  & \  \\ 
+	\  & 1 & r & \  & \  & \  & \  & \  & \  & \  & \  \\ 
+	\  & r & 1 & \  & \  & \  & \  & \  & \  & \  & \  \\ 
+	\  & \  & \  & 1 & r & r & \  & \  & \  & \  & \  \\ 
+	\  & \  & \  & r & 1 & r & \  & \  & \  & \  & \  \\ 
+	\  & \  & \  & r & r & 1 & r & r & r & r & \  \\ 
+	\  & \  & \  & \  & \  & \  & 1 & r & r & r & \  \\ 
+	\  & \  & \  & \  & \  & \  & r & 1 & r & r & \  \\ 
+	\  & \  & \  & \  & \  & \  & r & r & 1 & r & \  \\ 
+	\  & \  & \  & \  & \  & \  & r & r & r & 1 & \  \\ 
+	\  & \  & \  & \  & \  & \  & \  & \  & \  & \  & \ldots 
+\end{array}\right),
+\end{equation}
+
+
+where omitted values are equal to zero.  We may therefore control the strength 
+of correlation  between predictors in the same corrlated block by controlling $\rho$.
+We consider high-correlation settings, with $\rho \in \{0.85,0.9,0.95,0.99\}$.
+
+We initially generate an outcome $y$ according to the following model:
+
+\begin{equation}
+Y_i=X_{i1} + (X_{i2}+ X_{i3})/2+ (X_{i4}+ X_{i5}+X_{i6})/3+ (X_{i7}+ X_{i8}+ X_{i9}+ X_{i,10})/4 + \epsilon,
+\end{equation}
+where $\epsilon \sim \mathcal{N}(0,1)$.
+
+
+
+
+
+`elastic_net`:
+```{r, echo=FALSE, message=FALSE}
+library(glmnet)
+library(reshape)
+library(ggplot2)
+
+
+# The code below allows us to have more control over the plotting of 
+# regularisation paths than the default plot.glmnet function provides:
+
+# copy the plot function
+myPlot <- glmnet:::plotCoef
+
+# replace relevant part
+body(myPlot)[[14]] <- quote(if (label) {
+  nnz = length(which)
+  xpos = max(index)
+  pos = 4
+  if (xvar == "lambda") {
+    xpos = min(index)
+    pos = 2
+  }
+  xpos = rep(xpos, nnz)
+  ypos = beta[, ncol(beta)]
+  text(xpos, ypos, paste(which), pos = pos, ...) # only changed this with ...
+})
+
+# copy first level of plot and replace plotCoef  with myPlot
+myGlmnetPlot <- glmnet:::plot.glmnet
+
+body(myGlmnetPlot)[[3]] <- quote(myPlot(x$beta, lambda = x$lambda, 
+                                      df = x$df, dev = x$dev.ratio, 
+                                      label = label, xvar = xvar, ...))
+
+# Function to define the covariance matrix
+setCovarianceMatrix <- function(rho1 = 0, rho2 = 0, rho3 = 0, p = 20)
+{
+  covarianceMatrix <- diag(nrow = p, ncol = p)
+  
+  for(i in 2:3)
+  {
+    for(j in 2:3)
+    {
+      if(i != j)
+      {
+          covarianceMatrix[i,j] <- rho1
+      }
+    }
+  }
+
+
+  for(i in 4:6)
+  {
+    for(j in 4:6)
+    {
+      if(i != j)
+      {
+          covarianceMatrix[i,j] <- rho2
+      }
+    }
+  }
+  
+  for(i in 7:10)
+  {
+    for(j in 7:10)
+    {
+      if(i != j)
+      {
+          covarianceMatrix[i,j] <- rho3
+      }
+    }
+  }
+
+  return(covarianceMatrix)
+    
+}
+
+set.seed(1)
+
+dataDimension    <- 400
+sampleSize       <- 200
+covarianceMatrix <- setCovarianceMatrix(1,1,1,p = dataDimension)
+
+X <- MASS::mvrnorm(n = sampleSize, 
+                   mu = vector(mode = "numeric", length = dataDimension), 
+                   Sigma = covarianceMatrix)
+
+#pheatmap::pheatmap(cor(X), cluster_rows = F, cluster_cols = F)
+
+y <- rowSums(X[,1:10]) + rnorm(sampleSize, sd = sqrt(1))
+
+glmnetObj    <- glmnet(X[1:100,], y[1:100], alpha = 1)
+#plot(glmnetObj, xvar = "lambda", label = T)
+cv.glmnetObj <- cv.glmnet(X[1:100,], y[1:100], alpha = 1)
+
+
+sse <- sum((predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+                    newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+
+selectedVariables <- (coef(
+  glmnetObj,
+  s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+
+
+set.seed(1)
+nIts               <- 10
+selectionMatrix_10 <- matrix(0, nrow = 4, ncol = dataDimension)
+sseMatrix_10       <- matrix(0, nrow = 4, ncol = nIts)
+TPmatrix_10 <- FPmatrix_10 <- 
+                  TNmatrix_10 <- FNmatrix_10 <- matrix(0, nrow = 4, ncol = nIts)
+
+
+counter            <- 0
+for(rho in c(0.85,0.9,0.95,0.99))
+{
+  counter <- counter + 1
+    
+  covarianceMatrix <- setCovarianceMatrix(rho,rho,rho,p = dataDimension)
+
+  for(its in 1:nIts)
+    {
+    
+
+    X                 <- MASS::mvrnorm(n = sampleSize, 
+                                        mu = vector(mode = "numeric", 
+                                        length = dataDimension), 
+                                        Sigma = covarianceMatrix)
+
+
+    y                 <- X[,1] + rowSums((X[,2:3]))/2 + 
+                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 + 
+                           rnorm(sampleSize, sd = 1)
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 1)
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 1)
+
+    selectedVariables <- (coef(
+          glmnetObj,
+          s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+
+    selectionMatrix_10[counter,] <- selectionMatrix_10[counter,] + 
+        (coef(glmnetObj,
+        s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+    sseMatrix_10[counter, its]   <-  sum((
+        predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+    
+    TPmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[1:10] == T)
+    
+    FNmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[1:10] == F)
+
+    FPmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[11:dataDimension] == T)
+    
+    TNmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[11:dataDimension] == F)
+    
+        }
+}
+
+
+set.seed(1)
+selectionMatrix_01 <- matrix(0, nrow = 4, ncol = dataDimension)
+sseMatrix_01       <- matrix(0, nrow = 4, ncol = nIts)
+TPmatrix_01 <- FPmatrix_01 <- 
+                  TNmatrix_01 <- FNmatrix_01 <- matrix(0, nrow = 4, ncol = nIts)
+
+counter            <- 0
+for(rho in c(0.85,0.9,0.95,0.99))
+{
+  counter <- counter + 1
+
+  for(its in 1:nIts)
+    {
+    
+    covarianceMatrix <- setCovarianceMatrix(rho,rho,rho,p = dataDimension)
+
+    X                 <- MASS::mvrnorm(n = sampleSize, 
+                                        mu = vector(mode = "numeric", 
+                                        length = dataDimension), 
+                                        Sigma = covarianceMatrix)
+
+
+    y                 <- X[,1] + rowSums((X[,2:3]))/2 + 
+                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 + 
+                           rnorm(sampleSize, sd = 1)
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.1)
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.1)
+
+    
+    selectionMatrix_01[counter,] <- selectionMatrix_01[counter,] + 
+        (coef(glmnetObj,
+        s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+    sseMatrix_01[counter, its]   <-  sum((
+        predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        
+    TPmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[1:10] == T)
+    
+    FNmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[1:10] == F)
+
+    FPmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[11:dataDimension] == T)
+    
+    TNmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[11:dataDimension] == F)
+
+    }
+}
+
+
+
+
+set.seed(1)
+selectionMatrix_05   <- matrix(0, nrow = 4, ncol = dataDimension)
+sseMatrix_05         <- matrix(0, nrow = 4, ncol = nIts)
+
+TPmatrix_05 <- FPmatrix_05 <- 
+                  TNmatrix_05 <- FNmatrix_05 <- matrix(0, nrow = 4, ncol = nIts)
+counter            <- 0
+for(rho in c(0.85,0.9,0.95,0.99))
+{
+  counter <- counter + 1
+   
+  for(its in 1:nIts)
+    {
+    
+    covarianceMatrix <- setCovarianceMatrix(rho,rho,rho,p = dataDimension)
+
+    X                 <- MASS::mvrnorm(n = sampleSize, 
+                                        mu = vector(mode = "numeric", 
+                                        length = dataDimension), 
+                                        Sigma = covarianceMatrix)
+
+
+    y                 <- X[,1] + rowSums((X[,2:3]))/2 + 
+                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 + 
+                           rnorm(sampleSize, sd = 1)
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.5)
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.5)
+
+    
+    selectionMatrix_05[counter,] <- selectionMatrix_05[counter,] + 
+        (coef(glmnetObj,
+        s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+    sseMatrix_05[counter, its]   <-  sum((
+        predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+    
+    TPmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[1:10] == T)
+    
+    FNmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[1:10] == F)
+
+    FPmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[11:dataDimension] == T)
+    
+    TNmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[11:dataDimension] == F)
+
+    }
+}
+
+
+
+
+save(list = ls(), file = "firstExample.RData")
+```
+## Results (1)
+We train on 100 observations and predict for 100 out-of-sample observations.  We 
+consider $\rho \in \{0.85,0.9,0.95,0.99\}$, and fix the elastic-net mixing parameter
+$\alpha$ to be one of $\alpha \in \{0.1, 0.5, 1 \}$, where we note that $\alpha = 1$
+corresponds to the LASSO penalty.
+
+To assess the quality of predictions we calculate the sum-of-squares error (SSE)
+(shown for the out-of-sample predictions only).
+
+To assess the quality of the variable selection, we calculate the true positive,
+true negative, false positive and false negative selection rates, where -- for 
+example -- the true positive rate is the proportion of selected variables that 
+were correctly selected.
+
+We repeat the above procedure for 10 simulated datasets, so that we can provide
+an assessment of the variability in the SSE, TPR, FPR, etc.
+
+### TPR
+```{r, echo=FALSE}
+
+TPdf_10        <- as.data.frame(t(TPmatrix_10))
+TPdf_10$alpha  <- "1"
+
+TPdf_05        <- as.data.frame(t(TPmatrix_05))
+TPdf_05$alpha  <- "0.5"
+
+TPdf_01        <- as.data.frame(t(TPmatrix_01))
+TPdf_01$alpha  <- "0.1"
+
+TPdf           <- rbind(TPdf_01,TPdf_05,TPdf_10)
+
+names(TPdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+TPdf        <- melt(TPdf, id.vars="alpha")
+TPdf$value  <- TPdf$value/10
+names(TPdf)   <- c("alpha", "rho", "TruePositiveRate")
+p <- ggplot(TPdf, aes(x=rho, y=TruePositiveRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### TNR
+```{r, echo=FALSE}
+
+TNdf_10        <- as.data.frame(t(TNmatrix_10))
+TNdf_10$alpha  <- "1"
+
+TNdf_05        <- as.data.frame(t(TNmatrix_05))
+TNdf_05$alpha  <- "0.5"
+
+TNdf_01        <- as.data.frame(t(TNmatrix_01))
+TNdf_01$alpha  <- "0.1"
+
+TNdf           <- rbind(TNdf_01,TNdf_05,TNdf_10)
+
+names(TNdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+TNdf        <- melt(TNdf, id.vars="alpha")
+TNdf$value  <- TNdf$value/(dataDimension-10)
+names(TNdf)   <- c("alpha", "rho", "TrueNegativeRate")
+p <- ggplot(TNdf, aes(x=rho, y=TrueNegativeRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### FPR
+```{r, echo=FALSE}
+
+FPdf_10        <- as.data.frame(t(FPmatrix_10))
+FPdf_10$alpha  <- "1"
+
+FPdf_05        <- as.data.frame(t(FPmatrix_05))
+FPdf_05$alpha  <- "0.5"
+
+FPdf_01        <- as.data.frame(t(FPmatrix_01))
+FPdf_01$alpha  <- "0.1"
+
+FPdf           <- rbind(FPdf_01,FPdf_05,FPdf_10)
+
+names(FPdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+FPdf        <- melt(FPdf, id.vars="alpha")
+FPdf$value  <- FPdf$value/(dataDimension-10)
+names(FPdf)   <- c("alpha", "rho", "FalsePositiveRate")
+p <- ggplot(FPdf, aes(x=rho, y=FalsePositiveRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### FNR
+```{r, echo=FALSE}
+
+FNdf_10        <- as.data.frame(t(FNmatrix_10))
+FNdf_10$alpha  <- "1"
+
+FNdf_05        <- as.data.frame(t(FNmatrix_05))
+FNdf_05$alpha  <- "0.5"
+
+FNdf_01        <- as.data.frame(t(FNmatrix_01))
+FNdf_01$alpha  <- "0.1"
+
+FNdf           <- rbind(FNdf_01,FNdf_05,FNdf_10)
+
+names(FNdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+FNdf        <- melt(FNdf, id.vars="alpha")
+FNdf$value  <- FNdf$value/10
+names(FNdf)   <- c("alpha", "rho", "FalseNegativeRate")
+
+p <- ggplot(FNdf, aes(x=rho, y=FalseNegativeRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### SSE
+```{r, echo=FALSE}
+
+sseDf_01 <- as.data.frame(t(sseMatrix_01))
+sseDf_01$alpha <- "0.1"
+sseDf_05       <- as.data.frame(t(sseMatrix_05))
+sseDf_05$alpha <- "0.5"
+sseDf_10       <- as.data.frame(t(sseMatrix_10))
+sseDf_10$alpha <- "1"
+sseDf          <- rbind(sseDf_01,sseDf_05,sseDf_10)
+names(sseDf)   <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+sseDf          <- melt(sseDf, id.vars="alpha")
+names(sseDf)   <- c("alpha", "rho", "SSE")
+
+p <- ggplot(sseDf, aes(x=rho, y=SSE))
+p + geom_boxplot(aes(colour = alpha))
+```
+
+### Summary
+Overall, we can see that the elastic net with $\alpha = 0.1$ does a better job of
+identifying (i.e. not missing) the relevant predictors (high TPR), but that this 
+comes at the cost of wrongly identifying some predictors as relevant (higher FPR
+than the LASSO, $\alpha = 1$, case).  Conversely, the LASSO fails to identify
+some of the relevant predictors (lower TPR), but does not select any irrelevant 
+predictors (lower FPR). 
+
+Nevertheless, the LASSO provides the best predictive 
+performance on average (as quantified by the SSE).  This is because the relevant 
+predictors that the LASSO is failing to select are strongly correlated with 
+relevant predictors that the LASSO does select.  Hence the LASSO is providing
+a minimal model (smallest number of predictors) that provide the best predictive
+accuracy.  
+
+Whether we should prefer the LASSO or elastic net therefore depends on whether 
+we are mainly interested in identifying a minimal model that provides good 
+predictive performance, or if we care more about identifying all relevant 
+predictors (potentially at the cost of including some irrelevant predictors among
+our selections).  By tuning the $\alpha$ parameter, we can also find intermediate
+solutions between these two extremes.
+
+
+## Results (2)
+We now consider a second simulation scenario.  Our predictors are simulated as before
+(i.e. we have the same correlation structure between the predictors), but we now 
+generate the response as follows:
+\begin{equation}
+Y_i=X_{i1} + X_{i2}+ X_{i4}+ X_{i7} + \epsilon,
+\end{equation}
+
+where $\epsilon \sim \mathcal{N}(0,1)$.  Thus, this time, we have only one member
+from each correlated set of predictors appearing in the model.  We repeat the same
+analysis as previously.
+
+```{r, echo=FALSE}
+set.seed(1)
+nIts               <- 10
+selectionMatrix_10 <- matrix(0, nrow = 4, ncol = dataDimension)
+sseMatrix_10       <- matrix(0, nrow = 4, ncol = nIts)
+TPmatrix_10 <- FPmatrix_10 <- 
+                  TNmatrix_10 <- FNmatrix_10 <- matrix(0, nrow = 4, ncol = nIts)
+
+
+counter            <- 0
+for(rho in c(0.85,0.9,0.95,0.99))
+{
+  counter <- counter + 1
+
+  covarianceMatrix <- setCovarianceMatrix(rho,rho,rho,p = dataDimension)
+
+  for(its in 1:nIts)
+    {
+    
+
+    X                 <- MASS::mvrnorm(n = sampleSize, 
+                                        mu = vector(mode = "numeric", 
+                                        length = dataDimension), 
+                                        Sigma = covarianceMatrix)
+
+
+    y                 <- X[,1] + X[,2] + X[,4] + X[,7] + 
+                           rnorm(sampleSize, sd = 1)
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 1)
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 1)
+
+    selectedVariables <- (coef(
+          glmnetObj,
+          s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+
+    selectionMatrix_10[counter,] <- selectionMatrix_10[counter,] + 
+        (coef(glmnetObj,
+        s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+    sseMatrix_10[counter, its]   <-  sum((
+        predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+    
+    TPmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[c(1,2,4,7)] == T)
+    
+    FNmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[c(1,2,4,7)] == F)
+
+    FPmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[setdiff(1:dataDimension, c(1,2,4,7))] == T)
+    
+    TNmatrix_10[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[setdiff(1:dataDimension, c(1,2,4,7))] == F)
+    
+        }
+}
+
+
+set.seed(1)
+selectionMatrix_01 <- matrix(0, nrow = 4, ncol = dataDimension)
+sseMatrix_01       <- matrix(0, nrow = 4, ncol = nIts)
+TPmatrix_01 <- FPmatrix_01 <- 
+                  TNmatrix_01 <- FNmatrix_01 <- matrix(0, nrow = 4, ncol = nIts)
+
+counter            <- 0
+for(rho in c(0.85,0.9,0.95,0.99))
+{
+  counter <- counter + 1
+
+  for(its in 1:nIts)
+    {
+    
+    covarianceMatrix <- setCovarianceMatrix(rho,rho,rho,p = dataDimension)
+
+    X                 <- MASS::mvrnorm(n = sampleSize, 
+                                        mu = vector(mode = "numeric", 
+                                        length = dataDimension), 
+                                        Sigma = covarianceMatrix)
+
+
+    y                 <- X[,1] + X[,2] + X[,4] + X[,7] + 
+                           rnorm(sampleSize, sd = 1)
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.1)
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.1)
+
+    
+    selectionMatrix_01[counter,] <- selectionMatrix_01[counter,] + 
+        (coef(glmnetObj,
+        s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+    sseMatrix_01[counter, its]   <-  sum((
+        predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        
+    TPmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[c(1,2,4,7)] == T)
+    
+    FNmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[c(1,2,4,7)] == F)
+
+    FPmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[setdiff(1:dataDimension, c(1,2,4,7))] == T)
+    
+    TNmatrix_01[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[setdiff(1:dataDimension, c(1,2,4,7))] == F)
+
+    }
+}
+
+
+
+
+set.seed(1)
+selectionMatrix_05   <- matrix(0, nrow = 4, ncol = dataDimension)
+sseMatrix_05         <- matrix(0, nrow = 4, ncol = nIts)
+
+TPmatrix_05 <- FPmatrix_05 <- 
+                  TNmatrix_05 <- FNmatrix_05 <- matrix(0, nrow = 4, ncol = nIts)
+counter            <- 0
+for(rho in c(0.85,0.9,0.95,0.99))
+{
+  counter <- counter + 1
+
+    for(its in 1:nIts)
+    {
+    
+    covarianceMatrix <- setCovarianceMatrix(rho,rho,rho,p = dataDimension)
+
+    X                 <- MASS::mvrnorm(n = sampleSize, 
+                                        mu = vector(mode = "numeric", 
+                                        length = dataDimension), 
+                                        Sigma = covarianceMatrix)
+
+
+    y                 <- X[,1] + X[,2] + X[,4] + X[,7] + 
+                           rnorm(sampleSize, sd = 1)
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.5)
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.5)
+
+    
+    selectionMatrix_05[counter,] <- selectionMatrix_05[counter,] + 
+        (coef(glmnetObj,
+        s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
+    sseMatrix_05[counter, its]   <-  sum((
+        predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
+        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+    
+    TPmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[c(1,2,4,7)] == T)
+    
+    FNmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[c(1,2,4,7)] == F)
+
+    FPmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[setdiff(1:dataDimension, c(1,2,4,7))] == T)
+    
+    TNmatrix_05[counter, its] <- sum((coef(glmnetObj,
+                                           s= cv.glmnetObj$lambda.1se)
+                                      [2:(dataDimension + 1)] != 0)[setdiff(1:dataDimension, c(1,2,4,7))] == F)
+
+    }
+}
+
+save(list = ls(), file = "secondExample.RData")
+
+```
+
+
+### TPR
+```{r, echo=FALSE}
+
+TPdf_10        <- as.data.frame(t(TPmatrix_10))
+TPdf_10$alpha  <- "1"
+
+TPdf_05        <- as.data.frame(t(TPmatrix_05))
+TPdf_05$alpha  <- "0.5"
+
+TPdf_01        <- as.data.frame(t(TPmatrix_01))
+TPdf_01$alpha  <- "0.1"
+
+TPdf           <- rbind(TPdf_01,TPdf_05,TPdf_10)
+
+names(TPdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+TPdf        <- melt(TPdf, id.vars="alpha")
+TPdf$value  <- TPdf$value/4
+names(TPdf)   <- c("alpha", "rho", "TruePositiveRate")
+p <- ggplot(TPdf, aes(x=rho, y=TruePositiveRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### TNR
+```{r, echo=FALSE}
+
+TNdf_10        <- as.data.frame(t(TNmatrix_10))
+TNdf_10$alpha  <- "1"
+
+TNdf_05        <- as.data.frame(t(TNmatrix_05))
+TNdf_05$alpha  <- "0.5"
+
+TNdf_01        <- as.data.frame(t(TNmatrix_01))
+TNdf_01$alpha  <- "0.1"
+
+TNdf           <- rbind(TNdf_01,TNdf_05,TNdf_10)
+
+names(TNdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+TNdf        <- melt(TNdf, id.vars="alpha")
+TNdf$value  <- TNdf$value/(dataDimension-4)
+names(TNdf)   <- c("alpha", "rho", "TrueNegativeRate")
+p <- ggplot(TNdf, aes(x=rho, y=TrueNegativeRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### FPR
+```{r, echo=FALSE}
+
+FPdf_10        <- as.data.frame(t(FPmatrix_10))
+FPdf_10$alpha  <- "1"
+
+FPdf_05        <- as.data.frame(t(FPmatrix_05))
+FPdf_05$alpha  <- "0.5"
+
+FPdf_01        <- as.data.frame(t(FPmatrix_01))
+FPdf_01$alpha  <- "0.1"
+
+FPdf           <- rbind(FPdf_01,FPdf_05,FPdf_10)
+
+names(FPdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+FPdf        <- melt(FPdf, id.vars="alpha")
+FPdf$value  <- FPdf$value/(dataDimension-4)
+names(FPdf)   <- c("alpha", "rho", "FalsePositiveRate")
+p <- ggplot(FPdf, aes(x=rho, y=FalsePositiveRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+### FNR
+```{r, echo=FALSE}
+
+FNdf_10        <- as.data.frame(t(FNmatrix_10))
+FNdf_10$alpha  <- "1"
+
+FNdf_05        <- as.data.frame(t(FNmatrix_05))
+FNdf_05$alpha  <- "0.5"
+
+FNdf_01        <- as.data.frame(t(FNmatrix_01))
+FNdf_01$alpha  <- "0.1"
+
+FNdf           <- rbind(FNdf_01,FNdf_05,FNdf_10)
+
+names(FNdf) <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+FNdf        <- melt(FNdf, id.vars="alpha")
+FNdf$value  <- FNdf$value/4
+names(FNdf)   <- c("alpha", "rho", "FalseNegativeRate")
+
+p <- ggplot(FNdf, aes(x=rho, y=FalseNegativeRate))
+p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
+```
+
+
+### Summary
+The results are similar to previously, but now the LASSO ($\alpha = 1$ case) 
+seems to do better than before in terms of TPR.  This is because of the LASSO's
+tendency to pick out just one representative from a set of relevant correlated 
+predictors -- which, in this case, is the correct strategy.  However, for particularly large $\rho$, we can see that this can result in 
