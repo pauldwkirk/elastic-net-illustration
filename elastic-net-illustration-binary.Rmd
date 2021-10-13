@@ -1,5 +1,5 @@
 ---
-title: "Elastic net illustration"
+title: "Elastic net illustration - binary response"
 author: "Paul DW Kirk"
 date: "10/10/2021"
 output: pdf_document
@@ -8,20 +8,6 @@ output: pdf_document
 An illustration of the differing ways in which LASSO and elastic net treat 
 correlated predictors.
 
-
-## Introduction
-We consider regression models of the form:
-\begin{equation}
-Y_i=\beta_0 + \sum_{l=1}^p \beta_l X_{il}.
-\end{equation}
-
-The elastic net estimator puts a penalty of the form 
-\begin{equation}
-\lambda (\alpha \|\beta\|_1+(1-\alpha)\|\beta\|_2)
-\end{equation}
-
-on the parameter vector, where we have defined the vector $\beta$ to exclude the
-intercept $\beta_0$.
 
 ## Simulation setup
 We simulate data vectors $X_i \in \mathbb{R}^p$ by sampling from a $p$-variate 
@@ -62,9 +48,12 @@ We consider high-correlation settings, with $\rho \in \{0.85,0.9,0.95,0.99\}$.
 We initially generate an outcome $y$ according to the following model:
 
 \begin{equation}
-Y_i=X_{i1} + (X_{i2}+ X_{i3})/2+ (X_{i4}+ X_{i5}+X_{i6})/3+ (X_{i7}+ X_{i8}+ X_{i9}+ X_{i,10})/4 + \epsilon,
+Y_i ~ \sim \mbox{Bernoulli}(p_i),
 \end{equation}
-where $\epsilon \sim \mathcal{N}(0,1)$.
+where
+\begin{equation}
+\log \left(\frac{p_i}{1 - p_i}\right)= X_{i1} + (X_{i2}+ X_{i3})/2+ (X_{i4}+ X_{i5}+X_{i6})/3+ (X_{i7}+ X_{i8}+ X_{i9}+ X_{i,10})/4.
+\end{equation}
 
 
 
@@ -153,31 +142,10 @@ dataDimension    <- 400
 sampleSize       <- 200
 covarianceMatrix <- setCovarianceMatrix(1,1,1,p = dataDimension)
 
-X <- MASS::mvrnorm(n = sampleSize, 
-                   mu = vector(mode = "numeric", length = dataDimension), 
-                   Sigma = covarianceMatrix)
-
-#pheatmap::pheatmap(cor(X), cluster_rows = F, cluster_cols = F)
-
-y <- rowSums(X[,1:10]) + rnorm(sampleSize, sd = sqrt(1))
-
-glmnetObj    <- glmnet(X[1:100,], y[1:100], alpha = 1)
-#plot(glmnetObj, xvar = "lambda", label = T)
-cv.glmnetObj <- cv.glmnet(X[1:100,], y[1:100], alpha = 1)
-
-
-sse <- sum((predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-                    newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
-
-selectedVariables <- (coef(
-  glmnetObj,
-  s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-
-
 set.seed(1)
 nIts               <- 10
 selectionMatrix_10 <- matrix(0, nrow = 4, ncol = dataDimension)
-sseMatrix_10       <- matrix(0, nrow = 4, ncol = nIts)
+misclassificationMatrix_10       <- matrix(0, nrow = 4, ncol = nIts)
 TPmatrix_10 <- FPmatrix_10 <- 
                   TNmatrix_10 <- FNmatrix_10 <- matrix(0, nrow = 4, ncol = nIts)
 
@@ -200,11 +168,12 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 
     y                 <- X[,1] + rowSums((X[,2:3]))/2 + 
-                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 + 
-                           rnorm(sampleSize, sd = 1)
+                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 
 
-    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 1)
-    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 1)
+    y                 <- rbinom(sampleSize, 1, gtools::inv.logit(y))
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 1, familty = "binomial")
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 1, familty = "binomial")
 
     selectedVariables <- (coef(
           glmnetObj,
@@ -213,9 +182,9 @@ for(rho in c(0.85,0.9,0.95,0.99))
     selectionMatrix_10[counter,] <- selectionMatrix_10[counter,] + 
         (coef(glmnetObj,
         s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-    sseMatrix_10[counter, its]   <-  sum((
+    misclassificationMatrix_10[counter, its]   <-  sum((
         predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        newx = X[101:nrow(X),]) != y[101:nrow(X)]))/100
     
     TPmatrix_10[counter, its] <- sum((coef(glmnetObj,
                                            s= cv.glmnetObj$lambda.1se)
@@ -239,7 +208,7 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 set.seed(1)
 selectionMatrix_01 <- matrix(0, nrow = 4, ncol = dataDimension)
-sseMatrix_01       <- matrix(0, nrow = 4, ncol = nIts)
+misclassificationMatrix_01       <- matrix(0, nrow = 4, ncol = nIts)
 TPmatrix_01 <- FPmatrix_01 <- 
                   TNmatrix_01 <- FNmatrix_01 <- matrix(0, nrow = 4, ncol = nIts)
 
@@ -260,19 +229,20 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 
     y                 <- X[,1] + rowSums((X[,2:3]))/2 + 
-                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 + 
-                           rnorm(sampleSize, sd = 1)
+                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4
 
-    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.1)
-    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.1)
+    y                 <- rbinom(sampleSize, 1, gtools::inv.logit(y))
+
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.1, familty = "binomial")
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.1, familty = "binomial")
 
     
     selectionMatrix_01[counter,] <- selectionMatrix_01[counter,] + 
         (coef(glmnetObj,
         s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-    sseMatrix_01[counter, its]   <-  sum((
+    misclassificationMatrix_01[counter, its]   <-  sum((
         predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        newx = X[101:nrow(X),]) != y[101:nrow(X)]))/100
         
     TPmatrix_01[counter, its] <- sum((coef(glmnetObj,
                                            s= cv.glmnetObj$lambda.1se)
@@ -298,7 +268,7 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 set.seed(1)
 selectionMatrix_05   <- matrix(0, nrow = 4, ncol = dataDimension)
-sseMatrix_05         <- matrix(0, nrow = 4, ncol = nIts)
+misclassificationMatrix_05         <- matrix(0, nrow = 4, ncol = nIts)
 
 TPmatrix_05 <- FPmatrix_05 <- 
                   TNmatrix_05 <- FNmatrix_05 <- matrix(0, nrow = 4, ncol = nIts)
@@ -319,19 +289,20 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 
     y                 <- X[,1] + rowSums((X[,2:3]))/2 + 
-                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 + 
-                           rnorm(sampleSize, sd = 1)
+                          rowSums((X[,4:6]))/3 +  rowSums((X[,7:10]))/4 
+    
+    y                 <- rbinom(sampleSize, 1, gtools::inv.logit(y))
 
-    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.5)
-    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.5)
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.5, familty = "binomial")
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.5, familty = "binomial")
 
     
     selectionMatrix_05[counter,] <- selectionMatrix_05[counter,] + 
         (coef(glmnetObj,
         s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-    sseMatrix_05[counter, its]   <-  sum((
+    misclassificationMatrix_05[counter, its]   <-  sum((
         predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        newx = X[101:nrow(X),]) != y[101:nrow(X)]))/100
     
     TPmatrix_05[counter, its] <- sum((coef(glmnetObj,
                                            s= cv.glmnetObj$lambda.1se)
@@ -363,16 +334,16 @@ consider $\rho \in \{0.85,0.9,0.95,0.99\}$, and fix the elastic-net mixing param
 $\alpha$ to be one of $\alpha \in \{0.1, 0.5, 1 \}$, where we note that $\alpha = 1$
 corresponds to the LASSO penalty.
 
-To assess the quality of predictions we calculate the sum-of-squares error (SSE)
+To amisclassificationss the quality of predictions we calculate the sum-of-squares error (misclassification)
 (shown for the out-of-sample predictions only).
 
-To assess the quality of the variable selection, we calculate the true positive,
+To amisclassificationss the quality of the variable selection, we calculate the true positive,
 true negative, false positive and false negative selection rates, where -- for 
 example -- the true positive rate is the proportion of selected variables that 
 were correctly selected.
 
 We repeat the above procedure for 10 simulated datasets, so that we can provide
-an assessment of the variability in the SSE, TPR, FPR, etc.
+an amisclassificationssment of the variability in the misclassification, TPR, FPR, etc.
 
 ### TPR
 ```{r, echo=FALSE}
@@ -463,21 +434,21 @@ p <- ggplot(FNdf, aes(x=rho, y=FalseNegativeRate))
 p + geom_boxplot(aes(colour = alpha)) + coord_cartesian(ylim = c(0, 1))
 ```
 
-### SSE
+### misclassification
 ```{r, echo=FALSE}
 
-sseDf_01 <- as.data.frame(t(sseMatrix_01))
-sseDf_01$alpha <- "0.1"
-sseDf_05       <- as.data.frame(t(sseMatrix_05))
-sseDf_05$alpha <- "0.5"
-sseDf_10       <- as.data.frame(t(sseMatrix_10))
-sseDf_10$alpha <- "1"
-sseDf          <- rbind(sseDf_01,sseDf_05,sseDf_10)
-names(sseDf)   <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
-sseDf          <- melt(sseDf, id.vars="alpha")
-names(sseDf)   <- c("alpha", "rho", "SSE")
+misclassificationDf_01 <- as.data.frame(t(misclassificationMatrix_01))
+misclassificationDf_01$alpha <- "0.1"
+misclassificationDf_05       <- as.data.frame(t(misclassificationMatrix_05))
+misclassificationDf_05$alpha <- "0.5"
+misclassificationDf_10       <- as.data.frame(t(misclassificationMatrix_10))
+misclassificationDf_10$alpha <- "1"
+misclassificationDf          <- rbind(misclassificationDf_01,misclassificationDf_05,misclassificationDf_10)
+names(misclassificationDf)   <- c("rho_0_85", "rho_0_90", "rho_0_95", "rho_0_99", "alpha")
+misclassificationDf          <- melt(misclassificationDf, id.vars="alpha")
+names(misclassificationDf)   <- c("alpha", "rho", "misclassificationRate")
 
-p <- ggplot(sseDf, aes(x=rho, y=SSE))
+p <- ggplot(misclassificationDf, aes(x=rho, y=misclassificationRate))
 p + geom_boxplot(aes(colour = alpha))
 ```
 
@@ -489,10 +460,7 @@ than the LASSO, $\alpha = 1$, case).  Conversely, the LASSO fails to identify
 some of the relevant predictors (lower TPR), but does not select any irrelevant 
 predictors (lower FPR). 
 
-Nevertheless, the LASSO provides the best predictive 
-performance on average (as quantified by the SSE).  This is because the relevant 
-predictors that the LASSO is failing to select are strongly correlated with 
-relevant predictors that the LASSO does select.  Hence the LASSO is providing
+Nevertheless, there is little difference in predictive performance. Hence the LASSO is providing
 a minimal model (smallest number of predictors) that provide the best predictive
 accuracy.  
 
@@ -509,7 +477,11 @@ We now consider a second simulation scenario.  Our predictors are simulated as b
 (i.e. we have the same correlation structure between the predictors), but we now 
 generate the response as follows:
 \begin{equation}
-Y_i=X_{i1} + X_{i2}+ X_{i4}+ X_{i7} + \epsilon,
+Y_i ~ \sim \mbox{Bernoulli}(p_i),
+\end{equation}
+where
+\begin{equation}
+\log \left(\frac{p_i}{1 - p_i}\right)= X_{i1} + X_{i2}+ X_{i4}+ X_{i7} .
 \end{equation}
 
 where $\epsilon \sim \mathcal{N}(0,1)$.  Thus, this time, we have only one member
@@ -520,7 +492,7 @@ analysis as previously.
 set.seed(1)
 nIts               <- 10
 selectionMatrix_10 <- matrix(0, nrow = 4, ncol = dataDimension)
-sseMatrix_10       <- matrix(0, nrow = 4, ncol = nIts)
+misclassificationMatrix_10       <- matrix(0, nrow = 4, ncol = nIts)
 TPmatrix_10 <- FPmatrix_10 <- 
                   TNmatrix_10 <- FNmatrix_10 <- matrix(0, nrow = 4, ncol = nIts)
 
@@ -542,11 +514,11 @@ for(rho in c(0.85,0.9,0.95,0.99))
                                         Sigma = covarianceMatrix)
 
 
-    y                 <- X[,1] + X[,2] + X[,4] + X[,7] + 
-                           rnorm(sampleSize, sd = 1)
+    y                 <- X[,1] + X[,2] + X[,4] + X[,7]
+    y                 <- rbinom(sampleSize, 1, gtools::inv.logit(y))
 
-    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 1)
-    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 1)
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 1, familty = "binomial")
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 1, familty = "binomial")
 
     selectedVariables <- (coef(
           glmnetObj,
@@ -555,9 +527,9 @@ for(rho in c(0.85,0.9,0.95,0.99))
     selectionMatrix_10[counter,] <- selectionMatrix_10[counter,] + 
         (coef(glmnetObj,
         s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-    sseMatrix_10[counter, its]   <-  sum((
+    misclassificationMatrix_10[counter, its]   <-  sum((
         predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        newx = X[101:nrow(X),]) != y[101:nrow(X)]))/100
     
     TPmatrix_10[counter, its] <- sum((coef(glmnetObj,
                                            s= cv.glmnetObj$lambda.1se)
@@ -581,7 +553,7 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 set.seed(1)
 selectionMatrix_01 <- matrix(0, nrow = 4, ncol = dataDimension)
-sseMatrix_01       <- matrix(0, nrow = 4, ncol = nIts)
+misclassificationMatrix_01       <- matrix(0, nrow = 4, ncol = nIts)
 TPmatrix_01 <- FPmatrix_01 <- 
                   TNmatrix_01 <- FNmatrix_01 <- matrix(0, nrow = 4, ncol = nIts)
 
@@ -601,19 +573,19 @@ for(rho in c(0.85,0.9,0.95,0.99))
                                         Sigma = covarianceMatrix)
 
 
-    y                 <- X[,1] + X[,2] + X[,4] + X[,7] + 
-                           rnorm(sampleSize, sd = 1)
-
-    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.1)
-    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.1)
+    y                 <- X[,1] + X[,2] + X[,4] + X[,7]
+    y                 <- rbinom(sampleSize, 1, gtools::inv.logit(y))
+    
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.1, familty = "binomial")
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.1, familty = "binomial")
 
     
     selectionMatrix_01[counter,] <- selectionMatrix_01[counter,] + 
         (coef(glmnetObj,
         s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-    sseMatrix_01[counter, its]   <-  sum((
+    misclassificationMatrix_01[counter, its]   <-  sum((
         predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        newx = X[101:nrow(X),]) != y[101:nrow(X)]))/100
         
     TPmatrix_01[counter, its] <- sum((coef(glmnetObj,
                                            s= cv.glmnetObj$lambda.1se)
@@ -639,7 +611,7 @@ for(rho in c(0.85,0.9,0.95,0.99))
 
 set.seed(1)
 selectionMatrix_05   <- matrix(0, nrow = 4, ncol = dataDimension)
-sseMatrix_05         <- matrix(0, nrow = 4, ncol = nIts)
+misclassificationMatrix_05         <- matrix(0, nrow = 4, ncol = nIts)
 
 TPmatrix_05 <- FPmatrix_05 <- 
                   TNmatrix_05 <- FNmatrix_05 <- matrix(0, nrow = 4, ncol = nIts)
@@ -659,19 +631,18 @@ for(rho in c(0.85,0.9,0.95,0.99))
                                         Sigma = covarianceMatrix)
 
 
-    y                 <- X[,1] + X[,2] + X[,4] + X[,7] + 
-                           rnorm(sampleSize, sd = 1)
-
-    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.5)
-    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.5)
+    y                 <- X[,1] + X[,2] + X[,4] + X[,7]
+    y                 <- rbinom(sampleSize, 1, gtools::inv.logit(y))
+    glmnetObj         <- glmnet(X[1:100,], y[1:100], alpha = 0.5, familty = "binomial")
+    cv.glmnetObj      <- cv.glmnet(X[1:100,], y[1:100], alpha = 0.5, familty = "binomial")
 
     
     selectionMatrix_05[counter,] <- selectionMatrix_05[counter,] + 
         (coef(glmnetObj,
         s= cv.glmnetObj$lambda.1se)[2:(dataDimension + 1)] != 0)
-    sseMatrix_05[counter, its]   <-  sum((
+    misclassificationMatrix_05[counter, its]   <-  sum((
         predict(glmnetObj, s= cv.glmnetObj$lambda.1se, 
-        newx = X[101:nrow(X),]) - y[101:nrow(X)])^2)
+        newx = X[101:nrow(X),]) != y[101:nrow(X)]))/100
     
     TPmatrix_05[counter, its] <- sum((coef(glmnetObj,
                                            s= cv.glmnetObj$lambda.1se)
